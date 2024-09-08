@@ -5,6 +5,7 @@
 ## Build
 ### Make sure you have your kernel development headers and build files installed
 ```
+mkdir out
 make
 
 # Insert module and make entry in /dev
