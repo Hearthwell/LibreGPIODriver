@@ -4,6 +4,8 @@
 #include <linux/types.h>
 #include <linux/kdev_t.h>
 #include <linux/cdev.h>
+#include <linux/ioport.h>
+#include <asm/io.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Adam");
@@ -11,10 +13,16 @@ MODULE_DESCRIPTION("Libre Computer GPIO Driver");
 
 #define CHAR_DEVICE_NAME "GPIO_dev"
 #define DEVICE_COUNT 1
+/* TODO, CHECK MEMORY BLOCK FOR DIGITAL GPIO */
+#define GPIO_DIG_PHYSICAL_BASE_ADDRESS 0
+#define GPIO_ANA_PHYSICAL_BASE_ADDRESS (0xc8100000 + 0x09 * sizeof(uint32_t))
+#define GPIO_ANA_PHYSICAL_LENGTH ((0x0b - 0x09) * sizeof(uint32_t))
 
 struct Context{
     dev_t number;
     struct cdev device;
+    struct resource *reserved_analog_mapping;
+    void *analog_gpio_mapping;
 } static context;
 
 static int open_callback(struct inode *inode, struct file *instance){
@@ -59,6 +67,14 @@ static int __init driver_main(void){
     }
     cdev_init(&context.device, &fops);
     context.device.owner = THIS_MODULE;
+    /* NOTIFY KERNEL WE WILL BE USING THIS PHYSICAL ADDRESS SPACE */
+    context.reserved_analog_mapping = request_mem_region(GPIO_ANA_PHYSICAL_BASE_ADDRESS, GPIO_ANA_PHYSICAL_LENGTH, "");
+    /* MAP GPIO PHYSICAL ADDRESSES INTO KERNEL VIRTUAL MEMORY */
+    context.analog_gpio_mapping = ioremap(GPIO_ANA_PHYSICAL_BASE_ADDRESS, GPIO_ANA_PHYSICAL_LENGTH);
+    if(context.analog_gpio_mapping == NULL){
+        pr_err("COULD NOT MEMORY MAP THE GPIO ADDRESS SPACE, OFF: %lx, LEN: %lu\n", GPIO_ANA_PHYSICAL_BASE_ADDRESS, GPIO_ANA_PHYSICAL_LENGTH);
+        return -EADDRNOTAVAIL;
+    }
     /* LAST THING TO DO, AFTER THIS POINT DEVICE CAN BE CALLED FROM USER-SPACE */
     cdev_add(&context.device, context.number, DEVICE_COUNT);
     pr_info("REGISTERED DRIVER: %s WITH MAJOR: %d\n", CHAR_DEVICE_NAME, MAJOR(context.number));
@@ -68,6 +84,10 @@ static int __init driver_main(void){
 static void __exit driver_exit(void){
     /* REMOVE DEVICE FILE */
     cdev_del(&context.device);
+    /* CLEAR GPIO MMAP */
+    iounmap(context.analog_gpio_mapping);
+    /* INFORM KERNEL WE ARE NO LONGER USING THE GPIO ADDRESS SPACE */
+    release_mem_region(GPIO_ANA_PHYSICAL_BASE_ADDRESS, GPIO_ANA_PHYSICAL_LENGTH);
     unregister_chrdev_region(context.number, 1);
     pr_info("EXIT, GPIO driver\n");
 }
